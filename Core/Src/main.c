@@ -28,6 +28,7 @@
 /* USER CODE BEGIN Includes */
 #include "stdbool.h"
 #include "string.h"
+#include "math.h"
 #include <stdio.h>
 /* USER CODE END Includes */
 
@@ -51,32 +52,25 @@
 uint8_t rx_data[] = {0};
 char data[512] = {0};
 uint8_t len = 0;
-//TIM2 : LF, TIM3 : RF, TIM4 : RB, TIM5 : LB
+uint32_t last = 0;
 
 //Encoder Count per Duration : Previous, Current and Difference
 //Current
 uint16_t CntL = 0;
 uint16_t CntR = 0;
-const int Cnt_Per_Rotation = 330;
-//Encoder Velocity
-float VelL = 0;
-float VelR = 0;
-
-const float Rad = 0.085;
 
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-
+void Initialize_Count();
+void Transmit_Encoder_Count();
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-void Initialize_Count();
-void Calculate_Velocity(uint16_t Cnt, float Vel);
-void Transmit_Velocity(float Vel);
+
 /* USER CODE END 0 */
 
 /**
@@ -123,26 +117,39 @@ int main(void)
   HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
   HAL_TIM_Encoder_Start(&htim4, TIM_CHANNEL_ALL);
   HAL_TIM_Encoder_Start(&htim5, TIM_CHANNEL_ALL);
+
+  //Initialize for motor PWM
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4);
+
+  //12,13 : LF | 14,15 : RF | 8,9 : RF | 9,10 : RB
+  //Write pin SET at lower pin to go forward
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, SET);
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, RESET);
+
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, SET);
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, RESET);
+
+  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_8, SET);
+  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_9, RESET);
+
+  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_10, SET);
+  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_11, RESET);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  CntR = (TIM3 -> CNT >> 3) + (TIM4 -> CNT >> 3);
-	  CntL = (TIM2 -> CNT >> 3) + (TIM5 -> CNT >> 3);
 
-	  Calculate_Velocity(CntR, VelR);
-	  Calculate_Velocity(CntL, VelL);
-
-	  Transmit_Velocity(VelL);
-	  Transmit_Velocity(VelR);
+	  Transmit_Encoder_Count();
 
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  Initialize_Count();
-	  HAL_Delay(500);
+
   }
   /* USER CODE END 3 */
 }
@@ -197,19 +204,18 @@ void Initialize_Count(){
 	TIM4 -> CNT = 0;
 	TIM5 -> CNT = 0;
 }
-void Calculate_Velocity(uint16_t Cnt, float Vel){
-	//Cnt > 2047 : Reverse, Else : Forward
-	//Velocity : Meter per Second
-	if(Cnt > 2047){
-		Cnt = 4096 - Cnt;
-		Vel = ((-1) * Rad * Cnt * 3.14) / (Cnt_Per_Rotation * 0.5);
+void Transmit_Encoder_Count(){
+	//TIM2 : LF, TIM3 : RF, TIM4 : RB, TIM5 : LB
+	if(HAL_GetTick()-last > 100L){
+	  //CntR = (TIM3 -> CNT >> 3) + (TIM4 -> CNT >> 3);
+	  //CntL = (TIM2 -> CNT >> 3) + (TIM5 -> CNT >> 3);
+		CntR = TIM4 -> CNT >> 2;
+		CntL = TIM5 -> CNT >> 2;
+	  sprintf(data, "%u,%u\n\r", CntL, CntR);
+	  HAL_UART_Transmit_DMA(&huart6, (uint8_t*)data, strlen(data));
+	  Initialize_Count();
+	  last = HAL_GetTick();
 	}
-	else
-		Vel = (Rad * Cnt * 3.14) / (Cnt_Per_Rotation * 0.1);
-}
-void Transmit_Velocity(float Vel){
-	sprintf(data, "%f\n\r", Vel);
-	HAL_UART_Transmit_DMA(&huart6, (uint8_t*)data, 512);
 }
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
