@@ -26,7 +26,9 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "stdbool.h"
+#include "string.h"
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -46,13 +48,22 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-uint8_t txBuffer[] = "\r\nThis is a message from STM32F4-DISC\r\n";
-uint8_t rxBuffer[10];
-uint16_t txLen = 0;
+uint8_t rx_data[] = {0};
+char data[512] = {0};
+uint8_t len = 0;
+//TIM2 : LF, TIM3 : RF, TIM4 : RB, TIM5 : LB
 
-uint8_t rcvFlag = 0;
-uint8_t sndFlag = 0;
-uint8_t rx_data[];
+//Encoder Count per Duration : Previous, Current and Difference
+//Current
+uint16_t CntL = 0;
+uint16_t CntR = 0;
+const int Cnt_Per_Rotation = 330;
+//Encoder Velocity
+float VelL = 0;
+float VelR = 0;
+
+const float Rad = 0.085;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -63,7 +74,9 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
+void Initialize_Count();
+void Calculate_Velocity(uint16_t Cnt, float Vel);
+void Transmit_Velocity(float Vel);
 /* USER CODE END 0 */
 
 /**
@@ -102,23 +115,34 @@ int main(void)
   MX_TIM5_Init();
   MX_TIM6_Init();
   MX_USART6_UART_Init();
-  MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
   HAL_Delay(1000);
-  HAL_UART_Receive_DMA(&huart2, rx_data, 10);
-
+  Initialize_Count();
+  HAL_UART_Receive_DMA(&huart6, rx_data, 10);
+  HAL_TIM_Encoder_Start(&htim2, TIM_CHANNEL_ALL);
+  HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
+  HAL_TIM_Encoder_Start(&htim4, TIM_CHANNEL_ALL);
+  HAL_TIM_Encoder_Start(&htim5, TIM_CHANNEL_ALL);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  HAL_UART_Transmit_DMA(&huart2, (uint8_t*)"hello\r\n", sizeof("hello\r\n"));
-	  //HAL_UART_Transmit_DMA(&huart6, txBuffer, sizeof(txBuffer));
-	  HAL_Delay(1000);
+	  CntR = (TIM3 -> CNT >> 3) + (TIM4 -> CNT >> 3);
+	  CntL = (TIM2 -> CNT >> 3) + (TIM5 -> CNT >> 3);
+
+	  Calculate_Velocity(CntR, VelR);
+	  Calculate_Velocity(CntL, VelL);
+
+	  Transmit_Velocity(VelL);
+	  Transmit_Velocity(VelR);
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+	  Initialize_Count();
+	  HAL_Delay(500);
   }
   /* USER CODE END 3 */
 }
@@ -167,7 +191,26 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
-
+void Initialize_Count(){
+	TIM2 -> CNT = 0;
+	TIM3 -> CNT = 0;
+	TIM4 -> CNT = 0;
+	TIM5 -> CNT = 0;
+}
+void Calculate_Velocity(uint16_t Cnt, float Vel){
+	//Cnt > 2047 : Reverse, Else : Forward
+	//Velocity : Meter per Second
+	if(Cnt > 2047){
+		Cnt = 4096 - Cnt;
+		Vel = ((-1) * Rad * Cnt * 3.14) / (Cnt_Per_Rotation * 0.5);
+	}
+	else
+		Vel = (Rad * Cnt * 3.14) / (Cnt_Per_Rotation * 0.1);
+}
+void Transmit_Velocity(float Vel){
+	sprintf(data, "%f\n\r", Vel);
+	HAL_UART_Transmit_DMA(&huart6, (uint8_t*)data, 512);
+}
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
 
@@ -175,14 +218,7 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
-  HAL_UART_Transmit_DMA(&huart2, rxBuffer, 10);
-	//if (huart->Instance == USART6) {
-        // 데이터 1개를 수신하면 인터럽트를 발생시킨다.
-//		HAL_UART_Receive_IT(&huart6, &rx_data, 1);
-
-        // 받은 데이터를 전송한다.
-		//HAL_UART_Transmit(&huart6, &rx_data, 1, 10);
-//	}
+  HAL_UART_Transmit_DMA(&huart6, rx_data, 10);
 }
 /* USER CODE END 4 */
 

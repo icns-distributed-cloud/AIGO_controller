@@ -1,5 +1,8 @@
-main.c:73:5:main	8	static
-main.c:130:6:SystemClock_Config	88	static
-main.c:171:6:HAL_UART_TxCpltCallback	16	static
-main.c:176:6:HAL_UART_RxCpltCallback	16	static
-main.c:193:6:Error_Handler	4	static,ignoring_inline_asm
+main.c:86:5:main	8	static
+main.c:154:6:SystemClock_Config	88	static
+main.c:194:6:Initialize_Count	4	static
+main.c:200:6:Calculate_Velocity	24	static
+main.c:210:6:Transmit_Velocity	16	static
+main.c:214:6:HAL_UART_TxCpltCallback	16	static
+main.c:219:6:HAL_UART_RxCpltCallback	16	static
+main.c:229:6:Error_Handler	4	static,ignoring_inline_asm
