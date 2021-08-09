@@ -92,10 +92,10 @@ int32_t RecL = 0;
 int32_t RecR = 0;
 
 //Values for PID control
-uint32_t desired_speed_L = 0;
-uint32_t desired_speed_R = 0;
-uint32_t encoder_speed_L = 0;
-uint32_t encoder_speed_R = 0;
+int32_t desired_speed_L = 0;
+int32_t desired_speed_R = 0;
+int32_t encoder_speed_L = 0;
+int32_t encoder_speed_R = 0;
 uint32_t MOTOR_PWM[4] = {0};
 uint32_t Kp = 1;
 uint32_t encoder_cnt[4] = {0};
@@ -116,7 +116,7 @@ void Receive_Encoder_Count();
 void Receive_Serial();
 void Transmit_Data();
 void Set_Motor_PID();
-uint32_t Calculate_Value(uint32_t);
+int32_t Calculate_Value(int32_t);
 void Set_Motor_PWM();
 bool array_element_of_index_equal(uint8_t a[], uint8_t b[], uint8_t size) {
    uint8_t i;
@@ -361,14 +361,13 @@ void Transmit_Data(){
 void Receive_Serial(){
 	//Receive two integer data (Desired Encoder Rate for two wheels) from serial (Raspberry Pi)
 	//split string data, then convert to integer
-	HAL_UART_Receive_DMA(&huart6, (uint8_t*)recv_data, strlen(data));
+	HAL_UART_Receive_DMA(&huart6, (uint8_t*)recv_data, 16);
 	uint8_t i = 0;
 	char *p = strtok(recv_data, ",");
-	char *array = {0};
-	while(p !=NULL){
-		array[i++] = p;
-		p = strtok(NULL, ",");
-	}
+	char *array[2] = {0};
+	array[0] = p;
+	p = strtok(NULL, "/");
+	array[1] = p;
 	RecL = atoi(array[0]);
 	RecR = atoi(array[1]);
 }
@@ -466,8 +465,13 @@ void Set_Motor_PWM(){
 	 TIM1->CCR3 = PID_speed[2];
 	 TIM1->CCR4 = PID_speed[3];
 }
-uint32_t Calculate_Value(uint32_t val){
-	return 164.18 * exp(0.0112 * val);
+int32_t Calculate_Value(int32_t val){
+	if(val > 0)
+		return 164.18 * exp(0.0112 * val);
+	else if(val < 0)
+		return (-1) * 164.18 * exp(0.0112 * (-1) * val);
+	else
+		return 0;
 }
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
