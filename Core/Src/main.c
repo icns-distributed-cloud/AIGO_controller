@@ -20,7 +20,6 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "dma.h"
-#include "i2c.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
@@ -30,7 +29,6 @@
 #include "stdbool.h"
 #include "string.h"
 #include "math.h"
-#include "mpu6050.h"
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -53,11 +51,12 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-uint8_t rx_data[] = {0};
+char rx_data[] = {0};
+char recv_data[1024] = {0};
 uint32_t last = 0;
 char data[1024] = {0};
 uint8_t len = 0;
-MPU6050_t MPU6050;
+
 int16_t imu[6] = {0}; //AcX, AcY, AcZ, GyX, GyY, GyZ
 
 
@@ -89,8 +88,8 @@ uint16_t CntL = 0;
 uint16_t CntR = 0;
 
 //Desired Encoder Rate for PID control (Received From Raspberry Pi) : Left, Right
-uint32_t RecL = 0;
-uint32_t RecR = 0;
+int32_t RecL = 0;
+int32_t RecR = 0;
 
 //Values for PID control
 uint32_t desired_speed_L = 0;
@@ -112,8 +111,8 @@ void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 void Initialize_Encoder_Count();
 void Receive_Encoder_Count();
-void Receive_Lidar();
-void Receive_Imu();
+//void Receive_Lidar();
+//void Receive_Imu();
 void Receive_Serial();
 void Transmit_Data();
 void Set_Motor_PID();
@@ -126,6 +125,16 @@ bool array_element_of_index_equal(uint8_t a[], uint8_t b[], uint8_t size) {
          return false;
    }
    return true;
+}
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)	//Timer interrupt every 100ms
+{
+	if(htim->Instance == TIM6){
+		  Receive_Encoder_Count();
+		  Initialize_Encoder_Count();
+		  Set_Motor_PID();
+		  Set_Motor_PWM();
+	}
 }
 /* USER CODE END PFP */
 
@@ -170,7 +179,6 @@ int main(void)
   MX_TIM6_Init();
   MX_USART6_UART_Init();
   MX_DMA_Init();
-  MX_I2C1_Init();
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
   //while (MPU6050_Init(&hi2c1) ==1);
@@ -178,11 +186,9 @@ int main(void)
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4);
-
+  HAL_TIM_Base_Start_IT(&htim6);
   HAL_Delay(1000);
   Initialize_Encoder_Count();
-  HAL_UART_Receive_DMA(&huart6, rx_data, 10);
-  HAL_UART_Transmit_DMA(&huart3, &scan_command, 2);
   HAL_TIM_Encoder_Start(&htim2, TIM_CHANNEL_ALL);
   HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
   HAL_TIM_Encoder_Start(&htim4, TIM_CHANNEL_ALL);
@@ -190,7 +196,7 @@ int main(void)
 
   //Initialize for motor PWM
 
-  //12,13 : LF | 14,15 : RF | 8,9 : RB | 9,10 : LB
+  //12,13 : LF | 14,15 : RF | 8,9 : LB | 9,10 : RB
   //write pin SET at lower pin to go forward
   //initialize all wheels directions forward
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, SET);
@@ -214,15 +220,15 @@ int main(void)
 	  //Receive_Imu();
 	  //HAL_Delay(10);
 	  if(HAL_GetTick()-last > 100L){
-		  last = HAL_GetTick();
-		  Receive_Encoder_Count();
+
 		  Transmit_Data();
+
 		  Receive_Serial();
-		  Set_Motor_PID();
-		  Set_Motor_PWM();
-		  Initialize_Encoder_Count();
+		  last = HAL_GetTick();
 	  }
+
     /* USER CODE END WHILE */
+
     /* USER CODE BEGIN 3 */
 		 //TIM1->CCR1 = 0;
 		 //TIM1->CCR2 = 0;
@@ -265,11 +271,11 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
-  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV2;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
   {
     Error_Handler();
   }
@@ -290,6 +296,7 @@ void Receive_Encoder_Count(){
 		CntL = TIM5 -> CNT >> 2;
 	  //sprintf(data, "e%u,%u\n\r", CntL, CntR);
 }
+/**
 void Receive_Imu(){
 	MPU6050_Read_All(&hi2c1, &MPU6050);
 	imu[1] = MPU6050.Accel_X_RAW;
@@ -301,6 +308,8 @@ void Receive_Imu(){
 	imu[6] = MPU6050.Gyro_Z_RAW;
 
 }
+**/
+/**
 void Receive_Lidar(){
 	if(scan_start){
 		HAL_UART_Receive_DMA(&huart3, rx3_data, 5);
@@ -323,6 +332,7 @@ void Receive_Lidar(){
 		 }
 	  }
 }
+**/
 void Transmit_Data(){
 	//IMU
 	/**
@@ -351,10 +361,10 @@ void Transmit_Data(){
 void Receive_Serial(){
 	//Receive two integer data (Desired Encoder Rate for two wheels) from serial (Raspberry Pi)
 	//split string data, then convert to integer
-	HAL_UART_Receive_DMA(&huart6, (uint8_t*)data, strlen(data));
+	HAL_UART_Receive_DMA(&huart6, (uint8_t*)recv_data, strlen(data));
 	uint8_t i = 0;
-	char *p = strtok(data, ",");
-	char *array[2];
+	char *p = strtok(recv_data, ",");
+	char *array = {0};
 	while(p !=NULL){
 		array[i++] = p;
 		p = strtok(NULL, ",");
@@ -396,11 +406,10 @@ void Set_Motor_PID(){
 	//now, let's control motor PWM
 }
 void Set_Motor_PWM(){
-	//mind the order LF, RF, RB, LB
+	//mind the order LF, RF, LB, RB
 	//Set motor rotation direction first
 	//LF
-	/**
-	HAL_GPIO_WritePin(GPIOC,GPIO_PIN_13, GPIO_PIN_SET);
+
 	if (PID_speed[0] > 0 || PID_speed[0] == 0){
 		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, SET);
 		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, RESET);
@@ -424,38 +433,38 @@ void Set_Motor_PWM(){
 
 	//RB
 	if (PID_speed[2] > 0 || PID_speed[2] == 0){
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, SET);
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_9, RESET);
+		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_8, SET);
+		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_9, RESET);
 	}
 	else if(PID_speed[2] < 0){
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, RESET);
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_9, SET);
+		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_8, RESET);
+		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_9, SET);
 		PID_speed[2] *= -1;
 	}
 
 	//LB
 	if (PID_speed[3] > 0 || PID_speed[3] == 0){
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, SET);
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, RESET);
+		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_10, SET);
+		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_11, RESET);
 	}
 	else if(PID_speed[3] < 0){
 		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, RESET);
 		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, SET);
 		PID_speed[3] *= -1;
-	}**/
-	//For Safety, PID_speed won't go beyond 9,000
+	}
+	//For Safety, PID_speed won't go beyond 2,000
 	uint8_t i = 0;
 	while (i < 4){
-		if (PID_speed[i]>9000){
-			PID_speed[i] = 9000;
+		if (PID_speed[i]> 2000){
+			PID_speed[i] = 2000;
 		}
 		i++;
 	}
 	//Set PWM value
-	 TIM1->CCR1 = 4000;
-	 TIM1->CCR2 = 4000;
-	 TIM1->CCR3 = 4000;
-	 TIM1->CCR4 = 4000;
+	 TIM1->CCR1 = PID_speed[0];
+	 TIM1->CCR2 = PID_speed[1];
+	 TIM1->CCR3 = PID_speed[2];
+	 TIM1->CCR4 = PID_speed[3];
 }
 uint32_t Calculate_Value(uint32_t val){
 	return 164.18 * exp(0.0112 * val);
