@@ -102,8 +102,9 @@ uint32_t encoder_cnt[4] = {0};
 int32_t error_speed[4] = {0};
 int32_t PID_speed[4] = {0};
 uint32_t old_PID_speed[4] = {0, 0, 0, 0};
+uint8_t cnt = 0;
 
-
+unsigned char byte = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -210,6 +211,7 @@ int main(void)
 
   HAL_GPIO_WritePin(GPIOD, GPIO_PIN_10, SET);
   HAL_GPIO_WritePin(GPIOD, GPIO_PIN_11, RESET);
+  cnt = 0;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -222,11 +224,17 @@ int main(void)
 	  if(HAL_GetTick()-last > 100L){
 
 		  Transmit_Data();
-
-		  Receive_Serial();
 		  last = HAL_GetTick();
 	  }
-
+	  if(HAL_UART_Receive(&huart6, &byte, 1, 100 == HAL_OK)){
+	    recv_data[cnt] = byte;
+	    cnt++;
+	    if(byte == '/'){
+	      cnt = 0;
+	      Receive_Serial();
+	      Set_Motor_PWM();
+	    }
+	  }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -354,15 +362,13 @@ void Transmit_Data(){
 	**/
 	//Encoder
 	sprintf(data, "e%u,%u\n\r", CntL, CntR);
-	HAL_UART_Transmit_DMA(&huart6, (uint8_t*)data, strlen(data));
+	HAL_UART_Transmit(&huart6, (uint8_t*)data, strlen(data), 100);
 }
 
 
 void Receive_Serial(){
 	//Receive two integer data (Desired Encoder Rate for two wheels) from serial (Raspberry Pi)
 	//split string data, then convert to integer
-	HAL_UART_Receive_DMA(&huart6, (uint8_t*)recv_data, 16);
-	uint8_t i = 0;
 	char *p = strtok(recv_data, ",");
 	char *array[2] = {0};
 	array[0] = p;
@@ -375,8 +381,6 @@ void Receive_Serial(){
 //named PID, but the example code implemented only P control i think T.T
 void Set_Motor_PID(){
 	//0 : LF | 1 : RF | 2 : RB | 3 : LB
-	uint8_t index = 0;
-
 	//Determine Desired motor PWM value
 	desired_speed_L = Calculate_Value(RecL);
 	desired_speed_R = Calculate_Value(RecR);
