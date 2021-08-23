@@ -132,7 +132,6 @@ NVIC.PriorityGroup=NVIC_PRIORITYGROUP_0
 NVIC.SVCall_IRQn=true\:0\:0\:false\:false\:true\:true\:false
 NVIC.SysTick_IRQn=true\:0\:0\:false\:false\:true\:true\:true
 NVIC.TIM6_DAC_IRQn=true\:0\:0\:false\:false\:true\:true\:true
-NVIC.USART3_IRQn=true\:0\:0\:false\:false\:true\:true\:true
 NVIC.USART6_IRQn=true\:0\:0\:false\:false\:true\:true\:true
 NVIC.UsageFault_IRQn=true\:0\:0\:false\:false\:true\:true\:false
 PA0-WKUP.Locked=true

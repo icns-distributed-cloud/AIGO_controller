@@ -112,15 +112,15 @@ int32_t desired_speed_L = 0;
 int32_t desired_speed_R = 0;
 int32_t encoder_speed_L = 0;
 int32_t encoder_speed_R = 0;
-uint32_t MOTOR_PWM[4] = {0};
+int32_t MOTOR_PWM[4] = {0};
 uint32_t Kp = 1;
 uint32_t encoder_cnt[4] = {0};
 int32_t error_speed[4] = {0};
-int32_t PID_speed[4] = {0};
+int32_t PID_speed[4] = {0, 0, 0, 0};
 int32_t old_PID_speed[4] = {0, 0, 0, 0};
 uint8_t cnt = 0;
-
-
+int32_t motor_speed = 3000;
+int32_t avg_DIFF = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -128,13 +128,14 @@ void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 void Initialize_Encoder_Count();
 void Receive_Encoder_Count();
-//void Receive_Lidar();
+void Receive_Lidar();
 //void Receive_Imu();
 void Receive_Serial(char *recv);
 void Transmit_Data();
 void Set_Motor_PID();
 int32_t Calculate_Value(int32_t);
 void Set_Motor_PWM();
+
 bool array_element_of_index_equal(uint8_t a[], uint8_t b[], uint8_t size) {
    uint8_t i;
    for(i=0; i<size; i++){
@@ -143,6 +144,42 @@ bool array_element_of_index_equal(uint8_t a[], uint8_t b[], uint8_t size) {
    }
    return true;
 }
+int32_t array_avg_compare(uint16_t distance[]){
+
+   uint32_t sum_R = 0;
+   uint32_t sum_L = 0;
+   uint8_t len_L = 0;
+   uint8_t len_R = 0;
+   int32_t avg_R = 0;
+   int32_t avg_L = 0;
+   int32_t avg_diff = 0;
+
+   for(int i=0; i<90; i++){
+      sum_R += distance[i];
+      if(distance[i]!=0){
+         len_R++;
+      }
+   }
+   if(len_R == 0) return 0;
+   avg_R = sum_R/len_R;
+
+   for(int i=270; i<360; i++){
+      sum_L += distance[i];
+      if(distance[i]!=0){
+         len_L++;
+      }
+   }
+   if(len_L == 0) return 0;
+   avg_L = sum_L/len_L;
+
+   avg_diff = avg_R - avg_L;
+   if(avg_diff > 300 || avg_diff < -300){
+	   return avg_diff;
+   }
+   else
+	   return 0;
+}
+
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart);
 
 /* USER CODE END PFP */
@@ -165,7 +202,8 @@ int main(void)
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
+
+	HAL_Init();
 
   /* USER CODE BEGIN Init */
 
@@ -191,8 +229,8 @@ int main(void)
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
   //while (MPU6050_Init(&hi2c1) ==1);
-  __HAL_UART_ENABLE_IT(&huart6, UART_IT_IDLE);
-  HAL_UART_Receive_DMA(&huart6, RxBuffer, DMA_BUF_SIZE);
+  //__HAL_UART_ENABLE_IT(&huart6, UART_IT_IDLE);
+  //HAL_UART_Receive_DMA(&huart6, RxBuffer, DMA_BUF_SIZE);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
@@ -204,7 +242,7 @@ int main(void)
   HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
   HAL_TIM_Encoder_Start(&htim4, TIM_CHANNEL_ALL);
   HAL_TIM_Encoder_Start(&htim5, TIM_CHANNEL_ALL);
-
+  HAL_UART_Transmit(&huart3, scan_command, 2, 100);
   //Initialize for motor PWM
 
   //12,13 : LF | 14,15 : RF | 8,9 : LB | 9,10 : RB
@@ -235,16 +273,18 @@ int main(void)
 	  //for (uint8_t i = 0; i <64; i++){
 	//	  recv_data[i] = 0;
 	  //}
-	  //Receive_Lidar();
+	  Receive_Lidar();
 	  //Receive_Imu();
 	  //HAL_Delay(10);
-	  uint8_t byte = 0;
+	  //uint8_t byte = 0;
 	  if(HAL_GetTick()-last > 100L){
 		  Receive_Encoder_Count();
 		  Transmit_Data();
 		  Initialize_Encoder_Count();
 		  last = HAL_GetTick();
+
 	  }
+
 
     /* USER CODE END WHILE */
 
@@ -325,7 +365,7 @@ void Receive_Imu(){
 
 }
 **/
-/**
+
 void Receive_Lidar(){
 	if(scan_start){
 		HAL_UART_Receive_DMA(&huart3, rx3_data, 5);
@@ -333,22 +373,70 @@ void Receive_Lidar(){
 		 S = (rx3_data[0] & 0x01) ? 1 : 0;
 		 angle = (rx3_data[2]<<7 | rx3_data[1]>>1)/64;
 		 d = (rx3_data[4]<<8 | rx3_data[3])/4; //distance(mm);
-		 if(d >= 12000){
-			distance[angle] = 12000;
+		 if(d >= 10000){
+			distance[angle] = 10000;
 		 }
 		 else{
 			distance[angle] = d;
 		 }
+		 if(S == 1){
+			avg_DIFF = array_avg_compare(distance);
+			avg_DIFF*=15;
+			//printf("%d\r\n", avg_DIFF);
+			//avg > 0 when left side get closer
+			if(avg_DIFF > 0){
+				PID_speed[0] = motor_speed*3;
+				PID_speed[1] = motor_speed*(-3);
+				PID_speed[2] = motor_speed*(-3);
+				PID_speed[3] = motor_speed*3;
+			}
+			if (avg_DIFF == 0) {
+				PID_speed[0] = motor_speed;
+				PID_speed[1] = motor_speed;
+				PID_speed[2] = motor_speed;
+				PID_speed[3] = motor_speed;
+			}
+			if (avg_DIFF < 0) {
+				PID_speed[0] = motor_speed*(-3);
+				PID_speed[1] = motor_speed*3;
+				PID_speed[2] = motor_speed*3;
+				PID_speed[3] = motor_speed*(-3);
+			}
+//
+//			PID_speed[0] = motor_speed + avg_DIFF;
+//			PID_speed[1] = motor_speed - avg_DIFF;
+//			PID_speed[2] = motor_speed - avg_DIFF;
+//			PID_speed[3] = motor_speed + avg_DIFF;
+//			if(PID_speed[0] < 0){
+//				PID_speed[0] = 0;
+//			}
+//			if(PID_speed[1] < 0){
+//							PID_speed[1] = 0;
+//						}
+//			if(PID_speed[2] < 0){
+//							PID_speed[2] = 0;
+//						}
+//			if(PID_speed[3] < 0){
+//							PID_speed[3] = 0;
+//						}
+			//memset(distance, 0, 360);
+			 TIM1->CCR1 = 0;
+		     TIM1->CCR2 = 0;
+			 TIM1->CCR3 = 0;
+			 TIM1->CCR4 = 0;
+					Set_Motor_PWM();
+		 }
+
 	  }
 	else{
-	HAL_UART_Transmit_DMA(&huart3, scan_command, 2);
+	//HAL_UART_Transmit_DMA(&huart3, scan_command, 2);
 	HAL_UART_Receive(&huart3, rx3_start, 7, 100);
 		 if (array_element_of_index_equal(rx3_start, scan_response, 7)){
 			scan_start = true;
 		 }
-	  }
+	}
 }
-**/
+
 void Transmit_Data(){
 	//IMU
 	/**
@@ -462,8 +550,8 @@ void Set_Motor_PWM(){
 		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_11, RESET);
 	}
 	else if(PID_speed[3] < 0){
-		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_10, RESET);
-		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_11, SET);
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, RESET);
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, SET);
 		PID_speed[3] *= -1;
 	}
 	//For Safety, PID_speed won't go beyond 2,000
@@ -483,62 +571,62 @@ void Set_Motor_PWM(){
 }
 int32_t Calculate_Value(int32_t val){
 	if(val > 0)
-		return 164.18 * exp(0.0112 * val);
+		return 10*val;
 	else if(val < 0)
-		return (-1) * 164.18 * exp(0.0112 * (-1) * val);
+		return 10*val;
 	else
 		return 0;
 }
 
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
-{
-	// UART Rx Complete Callback;
-	// Rx Complete is called by: DMA (automatically), if it rolls over
-	// and when an IDLE Interrupt occurs
-	// DMA Interrupt allays occurs BEFORE the idle interrupt can be fired because
-	// idle detection needs at least one UART clock to detect the bus is idle. So
-	// in the case, that the transmission length is one full buffer length
-	// and the start buffer pointer is at 0, it will be also 0 at the end of the
-	// transmission. In this case the DMA rollover will increment the RxRollover
-	// variable first and len will not be zero.
-	if(__HAL_UART_GET_FLAG(huart, UART_FLAG_IDLE)) {									// Check if it is an "Idle Interrupt"
-		__HAL_UART_CLEAR_IDLEFLAG(&huart6);												// clear the interrupt
-		RxCounter++;																	// increment the Rx Counter
-
-		uint8_t TxSize = 0;
-		uint16_t start = RxBfrPos;														// Rx bytes start position (=last buffer position)
-		RxBfrPos = RX_BFR_SIZE - (uint16_t)huart->hdmarx->Instance->NDTR;				// determine actual buffer position
-		uint16_t len = RX_BFR_SIZE;														// init len with max. size
-
-		if(RxRollover < 2)  {
-			if(RxRollover) {															// rolled over once
-				if(RxBfrPos <= start) len = RxBfrPos + RX_BFR_SIZE - start;				// no bytes overwritten
-				else len = RX_BFR_SIZE + 1;												// bytes overwritten error
-			} else {
-				len = RxBfrPos - start;													// no bytes overwritten
-			}
-		} else {
-			len = RX_BFR_SIZE + 2;														// dual rollover error
-		}
-
-		if(len && (len <= RX_BFR_SIZE)) {
-			// create response message
-			//sprintf(TxBuffer, "ACK RxC:%d S:%d L:%d RO:%d RXp:%d >>", RxCounter, start, len, RxRollover, RxBfrPos);
-			//TxSize = strlen(TxBuffer);
-			// add received bytes to TxBuffer
-			uint8_t i;
-			for(i = 0; i < len; i++) *(TxBuffer + TxSize + i) = *(RxBuffer + ((start + i) % RX_BFR_SIZE));
-			TxSize += i;
-		} else {
-			// buffer overflow error:
-			//sprintf(TxBuffer, "NAK RX BUFFER OVERFLOW ERROR %d\r\n", (len - RX_BFR_SIZE));
-			TxSize = strlen(TxBuffer);
-		}
-      Receive_Serial(TxBuffer);
-	  Set_Motor_PID();
-	  Set_Motor_PWM();
-}
-}
+//void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+//{
+//	// UART Rx Complete Callback;
+//	// Rx Complete is called by: DMA (automatically), if it rolls over
+//	// and when an IDLE Interrupt occurs
+//	// DMA Interrupt allays occurs BEFORE the idle interrupt can be fired because
+//	// idle detection needs at least one UART clock to detect the bus is idle. So
+//	// in the case, that the transmission length is one full buffer length
+//	// and the start buffer pointer is at 0, it will be also 0 at the end of the
+//	// transmission. In this case the DMA rollover will increment the RxRollover
+//	// variable first and len will not be zero.
+//	if(__HAL_UART_GET_FLAG(huart, UART_FLAG_IDLE)) {									// Check if it is an "Idle Interrupt"
+//		__HAL_UART_CLEAR_IDLEFLAG(&huart6);												// clear the interrupt
+//		RxCounter++;																	// increment the Rx Counter
+//
+//		uint8_t TxSize = 0;
+//		uint16_t start = RxBfrPos;														// Rx bytes start position (=last buffer position)
+//		RxBfrPos = RX_BFR_SIZE - (uint16_t)huart->hdmarx->Instance->NDTR;				// determine actual buffer position
+//		uint16_t len = RX_BFR_SIZE;														// init len with max. size
+//
+//		if(RxRollover < 2)  {
+//			if(RxRollover) {															// rolled over once
+//				if(RxBfrPos <= start) len = RxBfrPos + RX_BFR_SIZE - start;				// no bytes overwritten
+//				else len = RX_BFR_SIZE + 1;												// bytes overwritten error
+//			} else {
+//				len = RxBfrPos - start;													// no bytes overwritten
+//			}
+//		} else {
+//			len = RX_BFR_SIZE + 2;														// dual rollover error
+//		}
+//
+//		if(len && (len <= RX_BFR_SIZE)) {
+//			// create response message
+//			//sprintf(TxBuffer, "ACK RxC:%d S:%d L:%d RO:%d RXp:%d >>", RxCounter, start, len, RxRollover, RxBfrPos);
+//			//TxSize = strlen(TxBuffer);
+//			// add received bytes to TxBuffer
+//			uint8_t i;
+//			for(i = 0; i < len; i++) *(TxBuffer + TxSize + i) = *(RxBuffer + ((start + i) % RX_BFR_SIZE));
+//			TxSize += i;
+//		} else {
+//			// buffer overflow error:
+//			//sprintf(TxBuffer, "NAK RX BUFFER OVERFLOW ERROR %d\r\n", (len - RX_BFR_SIZE));
+//			TxSize = strlen(TxBuffer);
+//		}
+//      Receive_Serial(TxBuffer);
+//	  Set_Motor_PID();
+//	  Set_Motor_PWM();
+//}
+//}
 /* USER CODE END 4 */
 
 /**
